@@ -1,7 +1,10 @@
-import aiogram
-from aiogram import Bot, Dispatcher, executor, types
+import shutil
 import logging
 import config
+import os
+from aiogram import Bot, Dispatcher, executor, types
+from audio_processor import AudioProcessor
+from image_processor import ImageProcessor
 
 logging.basicConfig(level=logging.INFO)
 
@@ -9,36 +12,70 @@ bot = Bot(token=config.BOT_API_TOKEN)
 dp = Dispatcher(bot)
 
 
+def log_info(message):
+    logging.info(
+        f'[{message.date}] Recieved message <{message.content_type}> from {message.from_user.username} [id:{message.from_user.id}]')
+
+
 @dp.message_handler(commands=['start'])
 async def start_message(message: types.Message):
     """
-    Sends to user start message with a short description
+    Sends user start message with a short description
     """
-
-    await bot.send_message(message.from_user.id, f'Hi, @{message.from_user.username} 👋 \n\n'
-                                                 f'Welcome to @AIPhotoCheck_bot!\n\n'
-                                                 f'Send me any picture in .jpg format to analysis it with Error Level Analysis (ELA).\n'
-                                                 f'To learn more about ELA use /help command or read: https://en.wikipedia.org/wiki/Error_level_analysis')
+    await bot.send_message(message.from_user.id,
+                           f'Привет, @{message.from_user.username} 👋 \n\n'
+                           f'Это бот для тестового задания компании ID R&D')
 
 
 @dp.message_handler(commands=['help'])
 async def help_message(message: types.Message):
     """
-    Sends to user help message with description of the Error Level Analysis methodology
+    Sends user help message with description of the Error Level Analysis methodology
     """
-    await bot.send_message(message.from_user.id, f'Error Level Analysis (ELA) permits identifying areas within an image that are at different compression levels. '
-                                                 f'With JPEG images, the entire picture should be at roughly the same level. '
-                                                 f'If a section of the image is at a significantly different error level, then it likely indicates a digital modification.\n\n'
-                                                 f'⚠ Note: send picture as an uncompressed file for best results.')
+    await bot.send_message(message.from_user.id,
+                           'который умеет : 1. Сохранять аудиосообщения из диалогов в базу данных (СУБД или на диск) по идентификаторам пользователей.\n'
+                           '2. Конвертирует все аудиосообщения в формат wav с частотой дискретизации 16kHz.'
+                           'Формат записи: uid —> [audio_message_0, audio_message_1, ..., audio_message_N].\n'
+                           '3. Определяет есть ли лицо на отправляемых фотографиях или нет, сохраняет только те, где оно есть')
 
 
-@dp.message_handler(content_types=['document', 'photo'])
+@dp.message_handler(content_types=['photo'])
 async def photo_analysis(message: types.Message):
-    """
-    Receives photo or uncompressed file, saves it and process with ELA.
-    In final sends 2 photos (ELA only and ELA blended with original image) to user
-    """
-    pass
+    log_info(message)
+    downloaded_file_path = os.path.join('TEMP',
+                                        f'{message.from_user.username}-{message.from_user.id}_{message.date.strftime("%d%m%y_%H-%M-%S")}.jpg')
+    await message.photo[-1].download(destination_file=downloaded_file_path,
+                                     make_dirs=True)
+    img_processor = ImageProcessor(downloaded_file_path)
+    img_processor.detect_faces()
+
+    if img_processor.faces:
+        if not os.path.exists('photos_with_face'):
+            os.mkdir('photos_with_face')
+        processed_file_path = os.path.join('photos_with_face',
+                                            f'{message.from_user.username}-{message.from_user.id}_{message.date.strftime("%d%m%y_%H-%M-%S")}.jpg')
+        os.replace(downloaded_file_path, processed_file_path)
+    shutil.rmtree('TEMP')
+
+
+@dp.message_handler(content_types=['voice'])
+async def audio_processing(message: types.Message):
+    log_info(message)
+    downloaded_file_path = os.path.join('TEMP', 'audio_message_temp')
+    if os.path.exists(str(message.from_user.id)) and os.listdir(
+            str(message.from_user.id)):
+        last_file = os.listdir(str(message.from_user.id))[-1][:-4]
+        order_number = int(last_file.split('_')[-1]) + 1
+        resampled_file_path = os.path.join(str(message.from_user.id),
+                                           f'audio_message_{order_number}.wav')
+    else:
+        resampled_file_path = os.path.join(str(message.from_user.id),
+                                           'audio_message_0.wav')
+    await message.voice.download(
+        destination_file=downloaded_file_path + '.ogg', make_dirs=True)
+    AudioProcessor.save_as_wav(input_file_path=downloaded_file_path,
+                               output_file_path=resampled_file_path)
+    shutil.rmtree('TEMP')
 
 
 if __name__ == '__main__':
